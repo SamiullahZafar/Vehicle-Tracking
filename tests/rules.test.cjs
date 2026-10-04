@@ -1,0 +1,25 @@
+for(const key of ['HTTP_PROXY','HTTPS_PROXY','http_proxy','https_proxy'])delete process.env[key];
+const {test,before,after}=require('node:test'),fs=require('fs');
+const {initializeTestEnvironment,assertSucceeds,assertFails}=require('@firebase/rules-unit-testing');
+const {ref,set,get}=require('firebase/database');
+let env;
+before(async()=>{
+ env=await initializeTestEnvironment({projectId:'demo-fleetrtdb',database:{host:'127.0.0.1',port:9000,rules:fs.readFileSync('database.rules.json','utf8')}});
+ await env.withSecurityRulesDisabled(c=>set(ref(c.database()),{state:{users:{alice:{active:true,role:'customer',session_version:0},bob:{active:true,role:'customer',session_version:0},admin:{active:true,role:'admin',session_version:0},disabled:{active:false,role:'customer',session_version:0},gone:{deleted:true,active:false,session_version:0}},vehicles:{a:{owner_id:'alice',token_hash:'secret',public:{latitude:31}},b:{owner_id:'bob',public:{latitude:32}},c:{owner_id:'disabled',public:{latitude:33}},d:{owner_id:'gone',public:{latitude:34}},e:{owner_id:'alice',deleted:true,public:{latitude:35}}}}}));
+});
+after(async()=>env?.cleanup());
+const db=(uid,sv=0)=>uid?env.authenticatedContext(uid,{sv}).database():env.unauthenticatedContext().database();
+const read=(uid,path,sv=0)=>get(ref(db(uid,sv),path));
+test('owner reads own live fix',()=>assertSucceeds(read('alice','state/vehicles/a/public')));
+test('owner cannot read other customer',()=>assertFails(read('alice','state/vehicles/b/public')));
+test('admin can track customer',()=>assertSucceeds(read('admin','state/vehicles/b/public')));
+test('anonymous denied',()=>assertFails(read(null,'state/vehicles/a/public')));
+test('suspended owner denied',()=>assertFails(read('disabled','state/vehicles/c/public')));
+test('admin can track suspended customer',()=>assertSucceeds(read('admin','state/vehicles/c/public')));
+test('deleted owner inaccessible even to admin',()=>assertFails(read('admin','state/vehicles/d/public')));
+test('deleted vehicle inaccessible',()=>assertFails(read('alice','state/vehicles/e/public')));
+test('revoked session version denied',()=>assertFails(read('alice','state/vehicles/a/public',1)));
+test('parent read denied to admin',()=>assertFails(read('admin','state')));
+test('device hash denied',()=>assertFails(read('admin','state/vehicles/a/token_hash')));
+test('history inaccessible directly',()=>assertFails(read('alice','history/a')));
+test('browser writes denied even for admin',()=>assertFails(set(ref(db('admin'),'state/vehicles/a/public'),{latitude:0})));

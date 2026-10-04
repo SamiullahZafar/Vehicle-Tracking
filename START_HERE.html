@@ -1,0 +1,320 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FleetRTDB • Setup guide</title><style>body{max-width:960px;margin:40px auto;padding:0 22px;font:17px/1.65 system-ui,sans-serif;color:#193344;background:#f4f7f9}h1,h2,h3{line-height:1.25;color:#006f68}h2{margin-top:48px;border-top:1px solid #ccdadd;padding-top:24px}pre{background:#122a39;color:#e6f2f7;padding:18px;border-radius:8px;overflow:auto}code{font-size:.9em}table{border-collapse:collapse;width:100%;background:white}th,td{padding:10px;text-align:left;border:1px solid #c7d7dc}a{color:#08756e}strong{color:#143b4c}pre code{color:inherit}li{margin:8px 0}@media print{body{background:white;font-size:11pt;margin:0;max-width:none}pre{white-space:pre-wrap;color:black;background:#eee}h2{break-after:avoid}tr{break-inside:avoid}}</style><body><h1>FleetRTDB — step-by-step deployment</h1>
+<p>Use this guide in order. It installs a new project alongside your old working tracker; do not overwrite the old directory or reuse its database root. You need your Firebase account, PythonAnywhere account, and Mapbox public token. No Cloud Functions deployment or Blaze upgrade is used.</p>
+<h2>1. Prepare Firebase</h2>
+<ol>
+<li>Open <a href="https://console.firebase.google.com/">https://console.firebase.google.com/</a> and select your intended project. A separate project/database for this installation avoids mixing old schemas.</li>
+<li>Copy the <strong>Project ID</strong> from Project settings → General. Use the SAME project in every following step.</li>
+<li>Open <strong>Build → Authentication → Get started</strong>. This initializes Firebase Authentication. The app uses custom-token sign-in; customers are created in FleetRTDB, not manually in the Firebase Authentication console. You do not need anonymous authentication.</li>
+<li>In Authentication → Settings → Authorized domains, add your exact PythonAnywhere hostname, such as <code>yourusername.pythonanywhere.com</code> (no <code>https://</code> or path).</li>
+<li>Open <strong>Build → Realtime Database → Create database</strong>. Choose a suitable region and start in locked mode. This is <strong>Realtime Database</strong>, not Cloud Firestore.</li>
+<li>Copy the database URL shown above the data tree. Examples are <code>https://PROJECT-default-rtdb.firebaseio.com</code> or <code>https://PROJECT-default-rtdb.asia-southeast1.firebasedatabase.app</code>. Copy YOUR exact URL; do not construct it from these examples.</li>
+<li>Open its <strong>Rules</strong> tab, replace the contents with <code>database.rules.json</code> from this package, and click <strong>Publish</strong>. Do not set public read/write to true.</li>
+<li>Project settings → General → Your apps → add a <strong>Web app</strong> if none exists. Copy its <code>apiKey</code>; this is <code>FIREBASE_WEB_API_KEY</code> below. Firebase Hosting is not required.</li>
+<li>Project settings → Service accounts → Generate new private key. Save the original JSON file unchanged. It belongs on the server only, outside the public/static folder.</li>
+</ol>
+<p>Your browser may show public Firebase configuration, but private service-account credentials and vehicle tokens must never be included in frontend JavaScript. The supplied rules allow a signed-in customer to read only their own sanitized live vehicle data. All browser database writes are denied; changes go through the authenticated Flask backend.</p>
+<h2>2. Upload to PythonAnywhere</h2>
+<p>Upload <code>FleetRTDB.zip</code> to your PythonAnywhere home directory. Open a <strong>Bash console</strong>, then paste these commands with their line breaks:</p>
+<pre><code class="language-bash">cd ~
+unzip FleetRTDB.zip
+cd ~/FleetRTDB
+python3 --version
+python3 -m venv ~/.virtualenvs/fleetrtdb
+source ~/.virtualenvs/fleetrtdb/bin/activate
+python -m pip install -r requirements.txt
+mkdir -p ~/private
+chmod 700 ~/private
+cp .env.example .env
+python -c &quot;import secrets; print(secrets.token_hex(32))&quot;
+</code></pre>
+<p>Python 3.10 or newer works. Your earlier console reported Python 3.10.5; there is no need for a <code>python3.11</code> command. Keep the generated random value for <code>SECRET_KEY</code>.</p>
+<p>Using PythonAnywhere&#39;s <strong>Files</strong> page, upload the downloaded JSON to:</p>
+<pre><code class="language-text">/home/YOUR_USERNAME/private/firebase-service-account.json
+</code></pre>
+<p>Replace <code>YOUR_USERNAME</code> with the actual case-sensitive home-directory name shown in your console. For your earlier account this was <code>ThinkBitLabs</code>; use the account that will host this deployment.</p>
+<p>Then run:</p>
+<pre><code class="language-bash">chmod 600 ~/private/firebase-service-account.json
+chmod 600 ~/FleetRTDB/.env
+</code></pre>
+<h2>3. Configure the server</h2>
+<p>Open <code>~/FleetRTDB/.env</code> in the Files editor. Replace every placeholder:</p>
+<pre><code class="language-dotenv">SECRET_KEY=PASTE_THE_NEW_RANDOM_HEX_VALUE
+FIREBASE_PROJECT_ID=YOUR_PROJECT_ID
+FIREBASE_DATABASE_URL=https://YOUR_EXACT_DATABASE_URL
+FIREBASE_SERVICE_ACCOUNT=/home/YOUR_USERNAME/private/firebase-service-account.json
+FIREBASE_WEB_API_KEY=YOUR_WEB_APP_API_KEY
+MAPBOX_TOKEN=YOUR_MAPBOX_PUBLIC_PK_TOKEN
+HISTORY_INTERVAL_SECONDS=5
+</code></pre>
+<ul>
+<li><code>MAPBOX_TOKEN</code> starts with <code>pk.</code>. Use your own working Mapbox token, not a Google Maps API key. If its URL restrictions are enabled, allow your PythonAnywhere domain. Mapbox has its own usage limits.</li>
+<li>Live tracker uploads target <strong>one second</strong>. <code>HISTORY_INTERVAL_SECONDS=5</code> groups stored history into five-second time buckets; the last accepted observation in a bucket is retained. Set <code>1</code> for one-second history with higher storage use.</li>
+<li>Old Firestore documents are not automatically migrated. This is a fresh RTDB installation.</li>
+</ul>
+<p>Run:</p>
+<pre><code class="language-bash">cd ~/FleetRTDB
+source ~/.virtualenvs/fleetrtdb/bin/activate
+python -m flask --app app check-firebase
+python -m flask --app app create-admin
+python -m flask --app app check-live
+</code></pre>
+<p><code>create-admin</code> asks for login ID, display name and a password of at least 12 characters. Password entry is hidden; type it and press Enter.</p>
+<p>Expected checks:</p>
+<pre><code class="language-text">Realtime Database read/write/delete succeeded.
+Administrator created in Realtime Database.
+Firebase custom-token sign-in succeeded. Browser live authentication is configured.
+</code></pre>
+<p><strong>Do not skip these checks.</strong> If <code>CONFIGURATION_NOT_FOUND</code> appears, return to Firebase <strong>Authentication → Get started</strong>, and verify the web API key, service-account project and Project ID all belong to the same project. Valid service-account JSON alone does not initialize Authentication.</p>
+<p>PythonAnywhere free accounts restrict outbound requests. These checks must reach your exact RTDB host, <code>oauth2.googleapis.com</code>, and <code>identitytoolkit.googleapis.com</code>. This transport uses HTTPS REST through <code>requests</code>, which honors PythonAnywhere&#39;s proxy. If access is denied by the host&#39;s allowlist, ask PythonAnywhere to allow that exact Firebase hostname. Do not weaken Firebase rules or disable TLS to work around a proxy restriction.</p>
+<h2>4. Configure PythonAnywhere Web</h2>
+<p>In <strong>Web → Add a new web app</strong>, select your domain, <strong>Manual configuration</strong>, and the same Python version used for the virtual environment (for your earlier setup: <strong>Python 3.10</strong>).</p>
+<p>Set these fields, replacing <code>YOUR_USERNAME</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Source code</td>
+<td><code>/home/YOUR_USERNAME/FleetRTDB</code></td>
+</tr>
+<tr>
+<td>Working directory</td>
+<td><code>/home/YOUR_USERNAME/FleetRTDB</code></td>
+</tr>
+<tr>
+<td>Virtualenv</td>
+<td><code>/home/YOUR_USERNAME/.virtualenvs/fleetrtdb</code></td>
+</tr>
+<tr>
+<td>Static URL</td>
+<td><code>/static/</code></td>
+</tr>
+<tr>
+<td>Static directory</td>
+<td><code>/home/YOUR_USERNAME/FleetRTDB/static/</code></td>
+</tr>
+</tbody></table>
+<p>Click the <strong>WSGI configuration file</strong> link and replace its contents with:</p>
+<pre><code class="language-python">import sys
+
+project = &#39;/home/YOUR_USERNAME/FleetRTDB&#39;
+if project not in sys.path:
+    sys.path.insert(0, project)
+
+from app import create_app
+application = create_app()
+</code></pre>
+<p>Save and click the green <strong>Reload</strong> button on the Web page. Turn on <strong>Force HTTPS</strong> if available. Open:</p>
+<pre><code class="language-text">https://YOUR_USERNAME.pythonanywhere.com/login
+</code></pre>
+<p>Sign in with the administrator created above. The connection label should say live Firebase updates are connected after successful sign-in. Opening <code>/api/gps</code> directly in a browser is not a GPS upload; the device sends an authenticated POST.</p>
+<p>Do not run <code>flask run</code> or keep a Bash console running for hosting. PythonAnywhere runs the WSGI app. Reload the Web app after changing <code>.env</code>, Python files, or installed packages; hard-refresh the browser after frontend changes.</p>
+<h2>5. Register the customer and vehicle</h2>
+<ol>
+<li>In Administration, create a customer login/password.</li>
+<li>Register a vehicle with name, registration, customer, a unique Device ID such as <code>ESP8266_GPS1</code>, and the ESP8266&#39;s <strong>station MAC</strong>.</li>
+<li>Copy the device token shown once. Save it privately. The database stores a hash; the hash will not work in firmware.</li>
+<li>Use a different Device ID and generated token for each tracker.</li>
+</ol>
+<p>You can initially flash the firmware to read its station MAC in Serial Monitor, then finish registration and flash the generated token. Wrong or missing tokens are rejected; there is no unauthenticated legacy upload mode.</p>
+<h2>6. Install Arduino support and wire the GPS</h2>
+<p>In Arduino IDE:</p>
+<ol>
+<li>Preferences → Additional Boards Manager URLs: add <code>https://arduino.esp8266.com/stable/package_esp8266com_index.json</code>.</li>
+<li>Boards Manager → install <strong>esp8266 by ESP8266 Community</strong>, version <strong>3.1.2</strong>.</li>
+<li>Select <strong>NodeMCU 1.0 (ESP-12E Module)</strong> and your COM port.</li>
+<li>Select <strong>4MB flash with 1MB filesystem</strong> (menu wording may be <code>4MB (FS:1MB OTA:~1019KB)</code>). Keep this filesystem layout for later uploads.</li>
+<li>Library Manager: install <strong>TinyGPSPlus 1.0.3</strong>, <strong>ArduinoJson 7.4.3</strong>, and <strong>DFRobotDFPlayerMini 1.0.6</strong>. Install the audio library even if audio is disabled.</li>
+</ol>
+<p>Connections:</p>
+<table>
+<thead>
+<tr>
+<th>GPS connection</th>
+<th>ESP8266 connection</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GPS TX</td>
+<td><strong>D5 / GPIO14</strong></td>
+</tr>
+<tr>
+<td>GPS GND</td>
+<td>GND</td>
+</tr>
+<tr>
+<td>GPS RX</td>
+<td>Leave disconnected</td>
+</tr>
+<tr>
+<td>GPS VCC</td>
+<td>Supply required by your particular GPS breakout board</td>
+</tr>
+</tbody></table>
+<p>ESP8266 GPIO uses <strong>3.3V logic</strong>. Do not apply a 5V serial output to D5. Power requirements depend on the GPS breakout, not just the NEO chip name. Use a stable regulated supply; a vehicle battery must not connect directly to the development board.</p>
+<p>Open <code>firmware/FleetTracker/FleetTracker.ino</code>. In the adjacent <code>config.h</code>, edit:</p>
+<pre><code class="language-cpp">#define WIFI_SSID &quot;YOUR_2.4_GHZ_HOTSPOT&quot;
+#define WIFI_PASSWORD &quot;YOUR_PASSWORD&quot;
+#define SERVER_URL &quot;https://YOUR_USERNAME.pythonanywhere.com/api/gps&quot;
+#define DEVICE_ID &quot;ESP8266_GPS1&quot;
+#define DEVICE_TOKEN &quot;THE_ORIGINAL_GENERATED_TOKEN&quot;
+</code></pre>
+<p>Keep <code>GPS_RX_PIN 14</code>. Keep <code>AUDIO_ENABLED false</code> until audio hardware is installed. Copy an SSID exactly, including spaces. The hotspot must offer 2.4GHz and must travel with the vehicle.</p>
+<p>The supplied <code>ROOT_CA</code> includes ISRG Root X1 and X2 for supported Let&#39;s Encrypt certificate chains. Keep TLS verification enabled. If your actual hostname uses a different chain, inspect the certificate hierarchy and install its authentic root CA. Root certificates and server chains can change; the firmware prints UTC, DNS, TLS and memory diagnostics to help identify the issue.</p>
+<p>Compile and upload. Open Serial Monitor at <strong>115200 baud</strong>.</p>
+<p>If it says <code>LittleFS mount failed</code> on a new board:</p>
+<ol>
+<li>Upload <code>firmware/format_flash/format_flash.ino</code> with the same board and flash layout.</li>
+<li>At 115200 baud, type <code>FORMAT</code> and send with New Line. This erases queued history; do it only when intended.</li>
+<li>Upload <code>FleetTracker.ino</code> again.</li>
+</ol>
+<p>Expected progression:</p>
+<pre><code class="language-text">WiFi connecting...
+WiFi CONNECTED. IP: ...
+Station MAC: ...
+Device ID: ESP8266_GPS1
+GPS=fresh ...
+HTTP=200 ...
+restart_inhibit_requested=0 engine_cutoff=0 phase=normal ...
+</code></pre>
+<p>Place the GPS antenna outdoors with a clear sky view. Valid coordinates in Serial Monitor confirm GPS reception; only <code>HTTP=200</code> with the accepted JSON response confirms server upload. Queued records are removed only after that acknowledgement.</p>
+<h2>7. Verify end-to-end operation</h2>
+<ol>
+<li>Leave the dashboard open. Move the tracker outdoors: the marker should update without pressing any button.</li>
+<li>Press <strong>Fit vehicles</strong>, then load history. Tracking listeners continue independently. Fit is a local map action and sends no server request.</li>
+<li>Sign in as a customer in a private browser window. Confirm that only that customer&#39;s vehicles appear.</li>
+<li>Select a vehicle → Allowed area → Radius. Enter a centre latitude/longitude or click the map, enter kilometres, and save.</li>
+<li>For a city, the admin first imports a verified Polygon/MultiPolygon GeoJSON. The owner then selects that city. A typed city name is not treated as a boundary.</li>
+<li>Test warnings with a stationary tracker and a temporary test boundary. Returning inside clears the geofence warning; a separate manual block stays active until cancelled.</li>
+<li>Suspend the test customer&#39;s login. Their session/live access is revoked, while the administrator can still track the vehicle.</li>
+<li>Test deletion on a disposable account/vehicle. Only the administrator sees deletion controls; the backend independently enforces the role. Confirm the exact login/device ID when prompted.</li>
+<li>In Journey and stops, choose a Pakistan-time date and load the route. Use <strong>Load more points</strong> until the full day has loaded. Long observation gaps are not joined by an invented route.</li>
+</ol>
+<p>Optional isolation test: from a PC run <code>python tools/device_check.py</code> (install <code>requests</code> first). It asks for your device token without displaying it and sends an explicitly simulated position only after you type <code>SEND</code>. Use a test vehicle. A successful simulated upload plus a failing board upload isolates firmware/network/TLS from the web backend.</p>
+<h2>8. Audio and the 0/1 response</h2>
+<p>Optional DFPlayer: GPIO4 / <strong>D2</strong> through a roughly 1k series resistor to DFPlayer RX, common ground, correctly rated power, speaker connected per the module datasheet. GPS continues on D5. Set <code>AUDIO_ENABLED true</code> after installation.</p>
+<p>Record the Urdu/English scripts in <code>VOICE_SCRIPTS.md</code> as MP3 files named <code>/mp3/0001.mp3</code> through <code>/mp3/0004.mp3</code> on the DFPlayer microSD. Audio recordings are not included. The firmware transmits play commands; it does not confirm audible playback.</p>
+<table>
+<thead>
+<tr>
+<th>Condition</th>
+<th>Voice</th>
+<th>Server command</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Normal / within boundary</td>
+<td>None</td>
+<td><code>stop_request: 0</code></td>
+</tr>
+<tr>
+<td>Outside boundary, first 60s of fresh observations</td>
+<td>0001</td>
+<td><code>0</code></td>
+</tr>
+<tr>
+<td>Still outside, next 60s</td>
+<td>0002</td>
+<td><code>0</code></td>
+</tr>
+<tr>
+<td>Still outside after 120s</td>
+<td>0004</td>
+<td><code>1</code></td>
+</tr>
+<tr>
+<td>Admin block first received, first 600s</td>
+<td>0003</td>
+<td><code>0</code></td>
+</tr>
+<tr>
+<td>Admin block after 600s</td>
+<td>0004</td>
+<td><code>1</code></td>
+</tr>
+</tbody></table>
+<p><strong><code>1</code> requests restart inhibition through a separate professionally engineered interlock. This package does not stop a running engine, drive an engine relay, or claim that GPS speed proves the engine is off.</strong> <code>engine_cutoff</code> is always <code>0</code>. Commands expire on the tracker after 15 seconds without a valid response; connection loss is reported. Boundary timers reset after stale GPS or a prolonged contact gap. Manual block timing starts at the first accepted upload after the request. Warnings and updated restrictions require working connectivity.</p>
+<h2>9. Maintenance and free-tier capacity</h2>
+<p>Run this daily, using PythonAnywhere Tasks if your account offers a scheduled task, or run it manually:</p>
+<pre><code class="language-bash">/home/YOUR_USERNAME/.virtualenvs/fleetrtdb/bin/python -m flask --app /home/YOUR_USERNAME/FleetRTDB/app.py purge-deleted
+/home/YOUR_USERNAME/.virtualenvs/fleetrtdb/bin/python -m flask --app /home/YOUR_USERNAME/FleetRTDB/app.py prune-history --days 7
+</code></pre>
+<p>Deletion revokes access immediately. Physical history cleanup waits at least <strong>20 minutes</strong> for in-flight requests to finish, then the cleanup command removes records. Run it again if it reports waiting. The cleanup is resumable after failure. Username/device-ID reservations and minimal deletion audit metadata remain; register a new Device ID for a new ownership period.</p>
+<p><code>prune-history --days 7</code> permanently removes points/events older than seven days. Export a private Firebase backup before pruning if you need longer records. Without running this command, history continues growing. There is no promise of unlimited free historical storage.</p>
+<p>Firebase Spark currently has 1GB RTDB storage, 10GB/month download allowance, and 100 simultaneous connections. Server reads, live viewers, reconnects and loading history all use bandwidth. RTDB avoids Firestore&#39;s per-document write quota, but it is not unlimited. Start with one test vehicle, inspect Firebase Usage after a representative day, and adjust retention/history/live intervals to fit your account. Each browser uses a connection for its listeners. The admin metadata operations read fleet metadata; this edition is intended for a small fleet, not thousands of vehicles.</p>
+<p>Free PythonAnywhere capacity, expiry/renewal requirements and outbound access also apply. A Spark project plus free PythonAnywhere is possible within their limits; continuous high-frequency operation of an arbitrary fleet is not guaranteed to remain free. No Blaze-only deployment command is required.</p>
+<h2>10. Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>auth/configuration-not-found</code></td>
+<td>Initialize Authentication, use a web API key from the SAME project, run <code>check-live</code></td>
+</tr>
+<tr>
+<td><code>permission_denied</code> in live listener</td>
+<td>Publish supplied RTDB rules, confirm session version/account status; sign out/in after account changes</td>
+</tr>
+<tr>
+<td>Service-account JSON error</td>
+<td>Upload original downloaded JSON, not pasted HTML or an empty file</td>
+</tr>
+<tr>
+<td>Firebase 403 / proxy block</td>
+<td>Exact database hostname, service-account IAM access, PythonAnywhere outbound allowlist</td>
+</tr>
+<tr>
+<td>Map unavailable</td>
+<td>Own valid Mapbox <code>pk.</code> token, URL restrictions, usage limits, browser network requests</td>
+</tr>
+<tr>
+<td>HTTP <code>-1</code></td>
+<td>Failure before a usable HTTP response: inspect DNS, UTC, BearSSL error, TCP443 and heap logs</td>
+</tr>
+<tr>
+<td><code>Chain could not be linked to a trust anchor</code></td>
+<td>Correct hostname and current certificate root chain; keep certificate verification enabled</td>
+</tr>
+<tr>
+<td>HTTP 401</td>
+<td>Original generated token; never its database hash; token may have been rotated</td>
+</tr>
+<tr>
+<td>HTTP 403</td>
+<td>Device ID, station MAC, upload-enabled status, deleted customer/vehicle</td>
+</tr>
+<tr>
+<td>HTTP 400</td>
+<td>Valid UTC fix time, coordinates, queue records no older than 30 days</td>
+</tr>
+<tr>
+<td>HTTP 404 / HTML response</td>
+<td>Exact <code>/api/gps</code> URL and correct WSGI app</td>
+</tr>
+<tr>
+<td>GPS no fix</td>
+<td>GPS TX→D5, common ground, supported power, clear sky; no-fix data is not a position</td>
+</tr>
+<tr>
+<td>Queue growing</td>
+<td>Upload throughput is below sample creation; diagnose first, reduce frequency if necessary</td>
+</tr>
+<tr>
+<td>Web app import error</td>
+<td>Web Python version matches virtualenv, correct WSGI path and installed requirements</td>
+</tr>
+<tr>
+<td>Live updates slower than 1s</td>
+<td>Inspect <code>elapsed_ms</code> and <code>server_ms</code>; internet/TLS/backend scheduling are part of latency</td>
+</tr>
+</tbody></table>
+<p>The API client reports failures and keeps unsent observations rather than pretending they arrived. The bounded offline queue holds up to 1,000 captured samples, normally five seconds apart; it drops new samples when full. Synchronous ESP8266 HTTPS can delay GPS parsing, so it cannot guarantee every fix during slow requests. Confirm performance with your actual board, hotspot and hosted account before relying on it operationally.</p>
+<p>Sources checked: Firebase RTDB REST authentication and ETag transactions, Firebase custom authentication, PythonAnywhere Flask deployment, Firebase RTDB billing. See README for links.</p>
+</body></html>

@@ -1,0 +1,48 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "state": {
+      "users": {
+        ".indexOn": [
+          "role"
+        ]
+      },
+      "vehicles": {
+        ".indexOn": [
+          "owner_id"
+        ],
+        "$vid": {
+          "public": {
+            ".read": "auth != null && root.child('state/users').child(auth.uid).child('active').val() == true && root.child('state/users').child(auth.uid).child('deleted').val() != true && root.child('state/users').child(auth.uid).child('session_version').val() == auth.token.sv && root.child('state/vehicles').child($vid).child('deleted').val() != true && root.child('state/users').child(root.child('state/vehicles').child($vid).child('owner_id').val()).exists() && root.child('state/users').child(root.child('state/vehicles').child($vid).child('owner_id').val()).child('deleted').val() != true && (root.child('state/users').child(auth.uid).child('role').val() == 'admin' || root.child('state/vehicles').child($vid).child('owner_id').val() == auth.uid)"
+          }
+        }
+      },
+      "deletion_jobs": {
+        ".indexOn": [
+          "status"
+        ]
+      }
+    },
+    "history": {
+      "$vid": {
+        "points": {
+          ".indexOn": [
+            "fix_time",
+            "received"
+          ]
+        },
+        "events": {
+          ".indexOn": [
+            "at"
+          ]
+        }
+      }
+    },
+    "limits": {
+      ".indexOn": [
+        "at"
+      ]
+    }
+  }
+}

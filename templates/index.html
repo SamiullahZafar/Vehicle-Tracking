@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="csrf" content="{{ session.csrf }}">
+    <title>Fleet Control</title>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/fleet.css?v=rtdb1">
+</head>
+
+<body data-mapbox-token="{{ mapbox_token }}" data-is-admin="{{ user.role == 'admin' }}">
+    <header>
+        <h1>Fleet Control</h1><span>{{ user.name }} · {{ user.role }}</span>
+        <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ session.csrf }}"><button>Sign
+                out</button></form>
+    </header>
+    <main>
+        <p id="notice" role="status"></p>
+        <p id="mapError" role="status"></p>
+        <p id="connection">Connecting…</p>
+        <section class="toolbar"><label id="customerLabel">Customer<select id="customer">
+                    <option value="">All customers</option>
+                </select></label><label>Vehicle<select id="vehicle">
+                    <option value="">All vehicles</option>
+                </select></label><button type="button" id="fit">Fit vehicles</button><button type="button"
+                id="refresh">Refresh now</button><label><input id="follow" type="checkbox"> Follow selected
+                vehicle</label><span id="status"></span></section>
+        <div id="map"></div>
+        <div id="vehicles" class="grid"></div>
+        <section id="details" hidden>
+            <h2 id="detailTitle"></h2>
+            <div class="grid">
+                <article>
+                    <h3>Journey and stops</h3><label>Date (Pakistan time)<input id="historyDate"
+                            type="date"></label><button type="button" id="history">Load route and stops</button><button
+                        type="button" id="more" hidden>Load more points</button><button type="button" id="clear">Clear
+                        route</button>
+                    <p id="historyNote"></p>
+                    <div id="stops"></div>
+                </article>
+                <article>
+                    <h3>Allowed area</h3>
+                    <p>For a radius, enter its centre or click the map. City boundaries use the imported geometry,
+                        regardless of your own location.</p>
+                    <form id="fenceForm"><label>Type<select name="kind" id="kind">
+                                <option value="off">No restriction</option>
+                                <option value="radius">Radius</option>
+                                <option value="city">City boundary</option>
+                                <option value="polygon">Custom GeoJSON</option>
+                            </select></label><label>Centre latitude<input name="lat" id="lat" type="number"
+                                step="any"></label><label>Centre longitude<input name="lng" id="lng" type="number"
+                                step="any"></label><label>Radius (km)<input name="km" type="number" min="0.05"
+                                step="any"></label><label>City<select id="cities"
+                                name="city_id"></select></label><label>Polygon / MultiPolygon GeoJSON<input type="file"
+                                id="polygon" accept=".json,.geojson"></label><button id="saveFence">Save
+                            restriction</button>
+                        <p id="lockNote"></p>
+                    </form>
+                </article>
+            </div>
+            {% if user.role=='admin' %}<article>
+                <h3>Administrator vehicle controls</h3>
+                <p>Block starts a 10-minute warning when received. The resulting 0/1 command requests restart
+                    inhibition. No running-engine cutoff is performed.</p><button type="button" id="block">Block /
+                    unblock</button><button type="button" id="lock">Lock / unlock boundary editing</button><button
+                    type="button" id="deviceToggle">Disable uploads</button><button type="button" id="rotate">Rotate
+                    device token</button><label>Payment due (record only)<input id="due" type="date"></label><button
+                    type="button" id="saveDue">Save due date</button><label>Station MAC<input id="mac"></label><button
+                    type="button" id="saveMac">Save MAC</button>
+            </article>{% endif %}
+            <article>
+                <h3>Latest events</h3><button type="button" id="eventsRefresh">Refresh events</button>
+                <div id="events"></div>
+            </article>
+        </section>
+        {% if user.role=='admin' %}<h2>Administration</h2>
+        <div class="grid">
+            <section>
+                <h3>Create customer</h3>
+                <form id="userForm"><label>Name<input name="name" required></label><label>Login ID<input name="username"
+                            required></label><label>Password<input name="password" type="password" minlength="12"
+                            required></label><button>Create customer</button></form>
+            </section>
+            <section>
+                <h3>Register vehicle</h3>
+                <form id="vehicleForm"><label>Vehicle name<input name="name" required></label><label>Registration<input
+                            name="plate" required></label><label>Customer<select name="owner_id" id="owners"
+                            required></select></label><label>Device ID<input name="device_id" value="ESP8266_GPS"
+                            required></label><label>Station MAC<input name="mac"
+                            placeholder="AA:BB:CC:DD:EE:FF"></label><button>Register vehicle</button></form>
+                <pre id="token"></pre>
+            </section>
+            <section>
+                <h3>Import city boundary</h3>
+                <form id="cityForm"><label>Name<input name="name" required></label><label>Verified Polygon/MultiPolygon
+                        GeoJSON<input id="cityFile" type="file" accept=".geojson,.json" required></label><button>Import
+                        city</button></form>
+                <p>A city name alone does not define its limits. Supply a verified boundary file.</p>
+            </section>
+        </div>
+        <h3>Customers</h3><button type="button" id="refreshUsers">Refresh customers</button>
+        <div id="users" class="grid"></div>{% endif %}
+        <p>Stops and routes are estimates from GPS observations. Signal gaps are shown as separate route segments.
+            Deletion blocks access immediately; run the cleanup task to permanently remove history.</p>
+        <section>
+            <h3>Change your password</h3>
+            <form id="passwordForm"><label>Current password<input name="current" type="password"
+                        required></label><label>New password<input name="password" type="password" minlength="12"
+                        required></label><button>Change password</button></form>
+        </section>
+    </main>
+    <script>
+        window.MAPBOX_TOKEN = document.body.dataset.mapboxToken;
+        window.IS_ADMIN = document.body.dataset.isAdmin === 'True';
+    </script>
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.js"></script>
+    <script src="/static/fleet.js?v=rtdb1"></script>
+</body>
+
+</html>
